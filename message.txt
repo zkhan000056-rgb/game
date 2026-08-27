@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neon Obby</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;700;900&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050505;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Poppins', sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.1);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            border-radius: 10px;
+        }
+
+        .ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: rgba(5, 5, 5, 0.85);
+            backdrop-filter: blur(4px);
+            z-index: 10;
+            transition: opacity 0.3s ease;
+        }
+
+        .hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        h1 {
+            font-size: 4rem;
+            margin: 0 0 10px 0;
+            text-transform: uppercase;
+            letter-spacing: 5px;
+            text-shadow: 0 0 20px #0ff;
+        }
+
+        p {
+            font-size: 1.2rem;
+            color: #aaa;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            font-family: inherit;
+            color: #050505;
+            background: #0ff;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 0 20px #0ff;
+            transition: all 0.2s ease;
+        }
+
+        button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 40px #0ff;
+        }
+
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 5;
+            font-size: 1.5rem;
+            font-weight: bold;
+            text-shadow: 0 0 10px #fff;
+            pointer-events: none;
+        }
+
+        /* Specific text colors */
+        .danger-text { text-shadow: 0 0 20px #f00; color: #fff; }
+        .win-text { text-shadow: 0 0 20px #0f0; color: #fff; }
+        .danger-btn { background: #f00; box-shadow: 0 0 20px #f00; color: white; }
+        .win-btn { background: #0f0; box-shadow: 0 0 20px #0f0; color: black; }
+        
+        .danger-btn:hover { box-shadow: 0 0 40px #f00; }
+        .win-btn:hover { box-shadow: 0 0 40px #0f0; }
+
+        kbd {
+            background: #222;
+            padding: 5px 10px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            color: #0ff;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="hud">Level <span id="level-display">1</span></div>
+        
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+        <!-- Start Menu -->
+        <div id="start-screen" class="ui-layer">
+            <h1>Neon Obby</h1>
+            <p>Move: <kbd>A</kbd> <kbd>D</kbd> or <kbd>←</kbd> <kbd>→</kbd><br>Jump: <kbd>Space</kbd></p>
+            <button onclick="startGame()">PLAY</button>
+        </div>
+
+        <!-- Game Over Menu -->
+        <div id="game-over-screen" class="ui-layer hidden">
+            <h1 class="danger-text">YOU DIED</h1>
+            <p>Don't touch the red hazards!</p>
+            <button class="danger-btn" onclick="retryLevel()">TRY AGAIN</button>
+        </div>
+
+        <!-- Victory Menu -->
+        <div id="victory-screen" class="ui-layer hidden">
+            <h1 class="win-text">YOU WIN!</h1>
+            <p>You mastered the Neon Obby!</p>
+            <button class="win-btn" onclick="resetGame()">PLAY AGAIN</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // UI Elements
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const victoryScreen = document.getElementById('victory-screen');
+        const levelDisplay = document.getElementById('level-display');
+
+        // Game State
+        let gameState = 'START'; // START, PLAYING, DEAD, WON
+        let currentLevel = 0;
+        let shakeTime = 0;
+        
+        // Physics & Input
+        const keys = { right: false, left: false, up: false };
+        let particles = [];
+        let trail = [];
+
+        const player = {
+            x: 50, y: 500, w: 24, h: 24,
+            velX: 0, velY: 0,
+            speed: 5, jumpPower: -12, gravity: 0.6,
+            grounded: false, color: '#fff'
+        };
+
+        // Level Design Database
+        // type 0 = platform (cyan), type 1 = lava (red), type 2 = goal (green)
+        const levels = [
+            // Level 1: The Basics
+            {
+                spawn: {x: 50, y: 500},
+                blocks: [
+                    {x: 0, y: 550, w: 200, h: 50, type: 0},
+                    {x: 280, y: 480, w: 100, h: 20, type: 0},
+                    {x: 480, y: 380, w: 100, h: 20, type: 0},
+                    {x: 680, y: 280, w: 120, h: 20, type: 0},
+                    {x: 720, y: 220, w: 40, h: 60, type: 2} // Goal
+                ]
+            },
+            // Level 2: Mind the Gap & Lava
+            {
+                spawn: {x: 50, y: 400},
+                blocks: [
+                    {x: 0, y: 450, w: 150, h: 20, type: 0},
+                    {x: 0, y: 580, w: 800, h: 20, type: 1}, // Lava floor
+                    {x: 230, y: 400, w: 50, h: 20, type: 0},
+                    {x: 350, y: 300, w: 50, h: 20, type: 0},
+                    {x: 480, y: 200, w: 50, h: 20, type: 0},
+                    {x: 650, y: 150, w: 150, h: 20, type: 0},
+                    {x: 700, y: 90, w: 40, h: 60, type: 2}
+                ]
+            },
+            // Level 3: The Gauntlet
+            {
+                spawn: {x: 30, y: 500},
+                blocks: [
+                    {x: 0, y: 550, w: 100, h: 50, type: 0},
+                    {x: 100, y: 580, w: 700, h: 20, type: 1}, // Lava floor
+                    {x: 180, y: 480, w: 40, h: 20, type: 0},
+                    {x: 300, y: 400, w: 40, h: 20, type: 0},
+                    {x: 180, y: 320, w: 40, h: 20, type: 0},
+                    {x: 300, y: 240, w: 40, h: 20, type: 0},
+                    {x: 450, y: 180, w: 40, h: 20, type: 0},
+                    {x: 580, y: 180, w: 150, h: 20, type: 0},
+                    {x: 630, y: 160, w: 50, h: 20, type: 1}, // Lava trap on last platform!
+                    {x: 720, y: 120, w: 40, h: 60, type: 2}
+                ]
+            }
+        ];
+
+        let currentBlocks = [];
+
+        // --- INPUT LISTENERS ---
+        window.addEventListener('keydown', (e) => {
+            if(e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = true;
+            if(e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = true;
+            if((e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') && player.grounded && gameState === 'PLAYING') {
+                player.velY = player.jumpPower;
+                player.grounded = false;
+                createParticles(player.x + player.w/2, player.y + player.h, '#fff', 10);
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if(e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
+            if(e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = false;
+        });
+
+        // --- GAME FLOW FUNCTIONS ---
+        function loadLevel(index) {
+            if (index >= levels.length) {
+                gameState = 'WON';
+                victoryScreen.classList.remove('hidden');
+                return;
+            }
+            currentLevel = index;
+            levelDisplay.innerText = currentLevel + 1;
+            const levelData = levels[currentLevel];
+            
+            player.x = levelData.spawn.x;
+            player.y = levelData.spawn.y;
+            player.velX = 0;
+            player.velY = 0;
+            trail = [];
+            particles = [];
+            
+            // Deep copy blocks so we don't modify originals
+            currentBlocks = JSON.parse(JSON.stringify(levelData.blocks));
+            gameState = 'PLAYING';
+        }
+
+        function startGame() {
+            startScreen.classList.add('hidden');
+            loadLevel(0);
+            requestAnimationFrame(gameLoop);
+        }
+
+        function retryLevel() {
+            gameOverScreen.classList.add('hidden');
+            loadLevel(currentLevel);
+        }
+
+        function resetGame() {
+            victoryScreen.classList.add('hidden');
+            loadLevel(0);
+        }
+
+        function die() {
+            gameState = 'DEAD';
+            shakeTime = 15;
+            createParticles(player.x + player.w/2, player.y + player.h/2, '#f00', 30);
+            setTimeout(() => {
+                gameOverScreen.classList.remove('hidden');
+            }, 500);
+        }
+
+        // --- EFFECTS ---
+        function createParticles(x, y, color, count) {
+            for(let i=0; i<count; i++) {
+                particles.push({
+                    x: x, y: y,
+                    vx: (Math.random() - 0.5) * 8,
+                    vy: (Math.random() - 0.5) * 8,
+                    life: 1.0,
+                    color: color
+                });
+            }
+        }
+
+        function updateParticles() {
+            for(let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.03;
+                if(p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function drawParticles() {
+            particles.forEach(p => {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = p.color;
+                ctx.fillRect(p.x, p.y, 4, 4);
+            });
+            ctx.globalAlpha = 1.0;
+            ctx.shadowBlur = 0;
+        }
+
+        // --- CORE LOGIC ---
+        function isColliding(a, b) {
+            return a.x < b.x + b.w && 
+                   a.x + a.w > b.x && 
+                   a.y < b.y + b.h && 
+                   a.y + a.h > b.y;
+        }
+
+        function checkHazard(block) {
+            if (block.type === 1 && gameState === 'PLAYING') {
+                die();
+            }
+            if (block.type === 2 && gameState === 'PLAYING') {
+                // Goal hit
+                gameState = 'TRANSITION';
+                createParticles(block.x + block.w/2, block.y + block.h/2, '#0f0', 50);
+                setTimeout(() => loadLevel(currentLevel + 1), 1000);
+            }
+        }
+
+        function update() {
+            if (gameState !== 'PLAYING') return;
+
+            // Horizontal Movement
+            if (keys.right) player.velX = player.speed;
+            else if (keys.left) player.velX = -player.speed;
+            else player.velX = 0;
+
+            player.x += player.velX;
+
+            // X Collisions
+            for (let b of currentBlocks) {
+                if (isColliding(player, b)) {
+                    if (player.velX > 0) player.x = b.x - player.w; // hit right
+                    else if (player.velX < 0) player.x = b.x + b.w; // hit left
+                    checkHazard(b);
+                }
+            }
+
+            // Screen bounds X
+            if(player.x < 0) player.x = 0;
+            if(player.x + player.w > canvas.width) player.x = canvas.width - player.w;
+
+            // Vertical Movement
+            player.velY += player.gravity;
+            player.y += player.velY;
+            player.grounded = false;
+
+            // Y Collisions
+            for (let b of currentBlocks) {
+                if (isColliding(player, b)) {
+                    if (player.velY > 0) { // Falling onto block
+                        player.y = b.y - player.h;
+                        player.grounded = true;
+                        player.velY = 0;
+                    } else if (player.velY < 0) { // Hitting head
+                        player.y = b.y + b.h;
+                        player.velY = 0;
+                    }
+                    checkHazard(b);
+                }
+            }
+
+            // Death by falling off screen
+            if (player.y > canvas.height && gameState === 'PLAYING') die();
+
+            // Trail Logic
+            trail.push({x: player.x, y: player.y});
+            if(trail.length > 5) trail.shift();
+        }
+
+        function draw() {
+            // Screen Shake Prep
+            ctx.save();
+            if (shakeTime > 0) {
+                let dx = (Math.random() - 0.5) * 10;
+                let dy = (Math.random() - 0.5) * 10;
+                ctx.translate(dx, dy);
+                shakeTime--;
+            }
+
+            // Background
+            ctx.fillStyle = '#0a0a0f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Blocks
+            currentBlocks.forEach(b => {
+                if (b.type === 0) { // Platform
+                    ctx.fillStyle = '#111';
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = '#0ff';
+                    ctx.strokeStyle = '#0ff';
+                } else if (b.type === 1) { // Lava
+                    ctx.fillStyle = '#111';
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#f00';
+                    ctx.strokeStyle = '#f00';
+                } else if (b.type === 2) { // Goal
+                    ctx.fillStyle = '#111';
+                    ctx.shadowBlur = 25;
+                    ctx.shadowColor = '#0f0';
+                    ctx.strokeStyle = '#0f0';
+                }
+                
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.rect(b.x, b.y, b.w, b.h);
+                ctx.fill();
+                ctx.stroke();
+            });
+
+            // Draw Trail
+            if (gameState === 'PLAYING') {
+                trail.forEach((t, i) => {
+                    ctx.globalAlpha = (i + 1) / trail.length * 0.4;
+                    ctx.fillStyle = '#0ff';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#0ff';
+                    ctx.fillRect(t.x, t.y, player.w, player.h);
+                });
+                ctx.globalAlpha = 1.0;
+            }
+
+            // Draw Player
+            if (gameState === 'PLAYING' || gameState === 'TRANSITION') {
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = '#a0f';
+                ctx.fillRect(player.x, player.y, player.w, player.h);
+            }
+
+            // Clean up shadow styles so particles don't inherit everything weirdly
+            ctx.shadowBlur = 0;
+            
+            drawParticles();
+            ctx.restore(); // Restore from screen shake
+        }
+
+        function gameLoop() {
+            update();
+            updateParticles();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Draw initial static screen behind the menu
+        ctx.fillStyle = '#0a0a0f';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    </script>
+</body>
+</html>
